@@ -408,3 +408,27 @@ By using a **Message Queue**, we solve the 200-failure scenario easily:
 
 ---
 
+# Stage 6: Priority Inbox & Efficiency at Scale
+
+### 1. Priority Algorithm
+To determine "importance," we use a **Weighted Recency Scoring** model. Each notification type is assigned a weight ($W$):
+* **Placement:** 3 | **Result:** 2 | **Event:** 1
+
+The final score is calculated as:  
+`Score = (W * 10^10) + Unix_Timestamp`
+
+This ensures that any "Placement" notification will always outrank a "Result," but within the same category, the most recent one wins.
+
+### 2. Real-time Efficiency: The Min-Heap Approach
+To maintain the **Top 10** notifications efficiently as new data streams in:
+* **The Problem:** Sorting the entire list every time a new notification arrives is $O(N \log N)$, which is too slow for high-frequency streams.
+* **The Solution:** Use a **Min-Priority Queue (Min-Heap)** with a fixed size of 10.
+    * When a new notification arrives, compare its score with the root (the smallest of the top 10).
+    * If the new score is higher, remove the root and insert the new notification ($O(\log 10)$).
+    * This keeps the complexity constant regardless of how many millions of notifications have passed through the system.
+
+### 3. Observability
+In line with project constraints, the Priority Inbox generation lifecycle is tracked via the custom `Log` middleware, ensuring that every re-ranking operation is auditable.
+
+
+![Priority Inbox Output](./notification_app_be/priority_inbox_output.png)
