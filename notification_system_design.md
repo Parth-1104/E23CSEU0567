@@ -106,7 +106,7 @@ Observability Integration: Every stage of the pipeline (Handshake, Emission, and
 
 
 
-## Stage 2: Persistent Storage & Data Strategy
+# Stage 2: Persistent Storage & Data Strategy
 
 ### 1. Database Choice: PostgreSQL
 
@@ -176,6 +176,70 @@ SELECT COUNT(*) FROM notifications
 WHERE user_id = $1 AND is_read = FALSE;
 
 ```
+
+---
+
+
+
+
+
+# Stage 3: Query Optimization & Performance Tuning
+
+### 1. Analysis of the Existing Query
+
+The provided query:
+
+```sql
+SELECT * FROM notifications 
+WHERE studentID = 1042 AND isRead = false 
+ORDER BY createdAt ASC;
+
+```
+
+**Is it accurate?** Yes, it functionally achieves the goal.
+**Why is it slow?** With 5,000,000 rows, the database is likely performing a **Full Table Scan**. It has to check every single row to see if it matches the `studentID` and `isRead` status, then load them into memory to sort them by `createdAt`. This is $O(N)$ complexity.
+
+### 2. The "Index Every Column" Fallacy
+
+A teammate suggested adding indexes on every column. **This is ineffective and dangerous.**
+
+* **Write Overhead:** Every time a notification is inserted, the DB must update *every* index. This slows down the "Real-time Push" performance.
+* **Storage Bloat:** Indexes take up disk space and memory (RAM).
+* **Optimizer Confusion:** Too many indexes can actually confuse the Query Optimizer, leading it to choose sub-optimal paths.
+
+### 3. Proposed Optimization: The Composite Index
+
+Instead of indexing everything, we use a **Composite (Multi-column) Index** designed specifically for the query's access pattern.
+
+**The Solution:**
+
+```sql
+CREATE INDEX idx_student_unread_created ON notifications (studentID, isRead, createdAt);
+
+```
+
+**Why this works:** The DB can now jump directly to `studentID`, filter by `isRead`, and the data is **already physically sorted** by `createdAt` within the index. This reduces the computational cost from $O(N)$ to $O(\log N)$.
+
+### 4. Likely Computation Cost
+
+* **Before Optimization:** High I/O cost due to scanning 5M rows. High CPU cost for sorting in-memory.
+* **After Optimization:** Minimal I/O (index seek). Zero CPU cost for sorting (pre-sorted index). The query will return in milliseconds.
+
+---
+
+### 5. Advanced Query: Placement Notifications (Last 7 Days)
+
+To find students who received a "Placement" notification in the last week, we use the following optimized query:
+
+```sql
+SELECT DISTINCT studentID 
+FROM notifications 
+WHERE notificationType = 'Placement' 
+  AND createdAt >= CURRENT_DATE - INTERVAL '7 days';
+
+```
+
+*Note: To make this query fast, a composite index on `(notificationType, createdAt)` would be recommended.*
 
 ---
 
