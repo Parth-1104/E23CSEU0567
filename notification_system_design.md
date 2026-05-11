@@ -102,10 +102,6 @@ Observability Integration: Every stage of the pipeline (Handshake, Emission, and
 
 ---
 
-
-
-
-
 # Stage 2: Persistent Storage & Data Strategy
 
 ### 1. Database Choice: PostgreSQL
@@ -243,3 +239,95 @@ WHERE notificationType = 'Placement'
 
 ---
 
+
+
+
+# Stage 4 - High Traffic Scaling
+
+## Challenges
+
+If 1000+ students refresh notifications every minute, the system may face the following challenges:
+
+- High database load
+- Increased API response time
+- Frequent repeated queries
+- Increased server traffic
+- Slow notification delivery
+
+---
+
+# Solutions
+
+## Redis Caching
+
+Frequently accessed notifications and unread counts can be cached in Redis.
+
+Flow:
+
+```txt
+Client → Redis Cache → PostgreSQL
+```
+
+If data exists in cache, the database is not queried.
+
+---
+
+## WebSockets
+
+WebSockets are used for real-time notification delivery.
+
+This reduces repeated API polling from clients and decreases unnecessary requests to the backend.
+
+---
+
+## Request Limits
+
+The API uses limits while fetching notifications to avoid large database reads.
+
+Example:
+
+```http
+GET /notifications?limit=10
+```
+
+---
+
+## Database Indexing
+
+Indexes are added on:
+- user_id
+- is_read
+- created_at
+- type
+
+to improve filtering and sorting performance.
+
+---
+
+## Load Balancing
+
+Multiple backend servers can be deployed behind a load balancer to distribute traffic evenly.
+
+---
+
+# API Response Optimization
+
+Only required fields are returned instead of using:
+
+```sql
+SELECT *
+```
+
+This reduces response size and improves performance.
+
+---
+
+# Expected Result
+
+Using caching, indexing, and WebSockets significantly reduces:
+- database load
+- API latency
+- repeated polling
+- unnecessary network traffic
+
+while improving scalability and real-time performance.
