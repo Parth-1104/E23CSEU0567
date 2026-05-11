@@ -95,3 +95,87 @@ Guaranteed Delivery (ACK Protocol): The server tracks "Sent" vs "Delivered" stat
 Event Debouncing & Batching: To preserve the UI thread during "Notification Storms," the frontend implements a 500ms debounce window, batching multiple rapid-fire updates into a single UI transition.
 
 Observability Integration: Every stage of the pipeline (Handshake, Emission, and ACK) is logged via the custom Logging Middleware (backend stack, middleware package). This replaces all console.log statements with production-grade telemetry for real-time monitoring.
+
+
+
+
+
+---
+
+
+
+
+
+## Stage 2: Persistent Storage & Data Strategy
+
+### 1. Database Choice: PostgreSQL
+
+**Why PostgreSQL?**
+Unlike basic NoSQL stores, PostgreSQL offers a native **JSONB** data type. This gives us the "flexibility of NoSQL" (for varied notification metadata) with the "reliability of SQL" (for complex read receipts and bulk updates).
+
+* **ACID Compliance:** Ensures that when a user clicks "Mark all as read," the state is updated atomically across all devices without race conditions.
+* **Partial Indexing:** We can create indexes only on `isRead = false`, making the "Unread Count" query (the most frequent operation) incredibly fast.
+
+### 2. Database Schema (Relational + Document Hybrid)
+
+```sql
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    title VARCHAR(100) NOT NULL,
+    message TEXT NOT NULL,
+    category VARCHAR(20) CHECK (category IN ('transactional', 'marketing', 'alert', 'system')),
+    is_read BOOLEAN DEFAULT FALSE,
+    -- JSONB allows us to store extra context (e.g., device_id, action_url) without schema migrations
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Differentiator: Partial Index for high-speed badge counts
+CREATE INDEX idx_unread_notifications ON notifications (user_id) WHERE is_read = FALSE;
+
+```
+
+---
+
+### 3. Scalability: Problems & Senior-Level Solutions
+
+| Problem | Senior-Level Solution |
+| --- | --- |
+| **Index Bloat:** As millions of notifications accumulate, indexes become slow. | **Table Partitioning:** Partition the table by `created_at`. Keep the last 30 days of notifications in a "hot" partition and archive older data to "cold" storage. |
+| **Write Heavy Load:** High-traffic bursts (e.g., a site-wide alert) can lock the DB. | **Write-Ahead Logging (WAL) & Queueing:** Use a message broker (Redis/RabbitMQ) to buffer writes. The API pushes to the queue, and a worker writes to the DB in chunks. |
+| **Read Latency:** Users check notifications constantly. | **Read-Through Caching:** Store the "Unread Count" in Redis. Increment/Decrement the Redis counter on every new notification or read-receipt so the DB isn't hit for every page refresh. |
+
+---
+
+### 4. Implementation Queries (Based on Stage 1 APIs)
+
+**Action: Fetch Feed (Paginated)**
+
+```sql
+SELECT * FROM notifications 
+WHERE user_id = $1 
+ORDER BY created_at DESC 
+LIMIT $2 OFFSET $3;
+
+```
+
+**Action: Mark All as Read (The "Atomic" Update)**
+
+```sql
+UPDATE notifications 
+SET is_read = TRUE 
+WHERE user_id = $1 AND is_read = FALSE;
+
+```
+
+**Action: Unread Count (Optimized via Partial Index)**
+
+```sql
+SELECT COUNT(*) FROM notifications 
+WHERE user_id = $1 AND is_read = FALSE;
+
+```
+
+---
+
